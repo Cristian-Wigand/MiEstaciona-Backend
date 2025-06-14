@@ -9,11 +9,9 @@ app = Flask(__name__)
 CORS(app)
 
 # Configuración de la base de datos SQLite
-
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 db_path = os.path.join(BASE_DIR, 'database.db')
 app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
-
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 
@@ -21,14 +19,50 @@ db.init_app(app)
 def home():
     return "MiEstaciona API corriendo"
 
-# Endpoint: Registrar ingreso de vehículo
+# 🔧 Función para asignar automáticamente la posición disponible
+def asignar_posicion_disponible():
+    posiciones = [f"A{str(i).zfill(2)}" for i in range(1, 11)]
+    ocupadas = [v.posicion for v in Vehiculo.query.filter_by(activo=True).all()]
+    for pos in posiciones:
+        if pos not in ocupadas:
+            return pos
+    return None  # Estacionamiento lleno
+
+# 🚗 Endpoint nuevo para registrar vehículo (con posicionamiento automático)
+@app.route('/registrar_vehiculo', methods=['POST'])
+def registrar_vehiculo():
+    data = request.get_json()
+    try:
+        posicion = asignar_posicion_disponible()
+        if not posicion:
+            return jsonify({'error': 'Estacionamiento lleno'}), 400
+
+        nuevo_vehiculo = Vehiculo(
+            patente=data['patente'],
+            conductor=data['conductor'],
+            correo=data.get('correo'),
+            hora_entrada=datetime.fromisoformat(data['hora_entrada']),
+            posicion=posicion,
+            activo=True
+        )
+        db.session.add(nuevo_vehiculo)
+        db.session.commit()
+        return jsonify({'mensaje': 'Vehículo registrado con éxito'}), 201
+
+    except Exception as e:
+        print("Error:", e)
+        return jsonify({'error': 'Error al registrar vehículo'}), 500
+
+# Endpoint: Registrar ingreso de vehículo (manual, sin posición automática)
 @app.route('/ingreso', methods=['POST'])
 def registrar_ingreso():
     data = request.json
     nuevo = Vehiculo(
         patente=data['patente'],
         conductor=data['conductor'],
-        hora_entrada=datetime.now()
+        hora_entrada=datetime.now(),
+        posicion="MANUAL",  # Por compatibilidad
+        activo=True
     )
     db.session.add(nuevo)
     db.session.commit()
@@ -37,13 +71,14 @@ def registrar_ingreso():
 # Endpoint: Registrar salida y calcular tarifa
 @app.route('/salida/<patente>', methods=['PUT'])
 def registrar_salida(patente):
-    vehiculo = Vehiculo.query.filter_by(patente=patente, hora_salida=None).first()
+    vehiculo = Vehiculo.query.filter_by(patente=patente, activo=True).first()
     if not vehiculo:
         return jsonify({'error': 'Vehículo no encontrado'}), 404
 
     vehiculo.hora_salida = datetime.now()
     duracion = (vehiculo.hora_salida - vehiculo.hora_entrada).total_seconds() / 60
     vehiculo.total_pagar = round(duracion * 50, 0)  # Tarifa por minuto
+    vehiculo.activo = False  # Marca que ya salió
     db.session.commit()
     return jsonify({
         'mensaje': 'Salida registrada',
@@ -59,7 +94,9 @@ def historial():
         'conductor': v.conductor,
         'entrada': v.hora_entrada,
         'salida': v.hora_salida,
-        'total_pagar': v.total_pagar
+        'total_pagar': v.total_pagar,
+        'posicion': v.posicion,
+        'activo': v.activo
     } for v in vehiculos]
     return jsonify(resultado)
 
@@ -92,10 +129,10 @@ def login():
     if usuario and usuario.check_password(data['contraseña']):
         return jsonify({
             'mensaje': 'Inicio de sesión exitoso',
-            'id': usuario.id,  # Asegúrate que Usuario tiene atributo id
+            'id': usuario.id,
             'nombre': usuario.nombre,
             'tipo_usuario': usuario.tipo_usuario
-            })
+        })
     return jsonify({'error': 'Correo o contraseña incorrectos'}), 401
 
 if __name__ == '__main__':
