@@ -8,138 +8,203 @@ from models import db, Vehiculo, Usuario
 app = Flask(__name__)
 CORS(app)
 
-# Configuración de la base de datos SQLite
+# ──────────────────────
+# Configuración SQLite
+# ──────────────────────
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-db_path = os.path.join(BASE_DIR, 'database.db')
-app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{os.path.join(BASE_DIR,'database.db')}"
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+# Tarifa (colócala como variable de entorno si la quieres configurable)
+app.config["TARIFA_POR_MINUTO"] = float(os.getenv("TARIFA_POR_MINUTO", 50))
+
 db.init_app(app)
 
-@app.route('/')
-def home():
-    return "MiEstaciona API corriendo"
-
-# 🔧 Función para asignar automáticamente la posición disponible
+# ──────────────────────
+# Utilidades internas
+# ──────────────────────
 def asignar_posicion_disponible():
+    """Devuelve primera plaza libre A01…A10 o None si está lleno."""
     posiciones = [f"A{str(i).zfill(2)}" for i in range(1, 11)]
-    ocupadas = [v.posicion for v in Vehiculo.query.filter_by(activo=True).all()]
+    ocupadas   = [v.posicion for v in Vehiculo.query.all()]  # Solo vehículos estacionados
     for pos in posiciones:
         if pos not in ocupadas:
             return pos
-    return None  # Estacionamiento lleno
+    return None
 
-# 🚗 Endpoint nuevo para registrar vehículo (con posicionamiento automático)
-@app.route('/registrar_vehiculo', methods=['POST'])
+def calcular_total(hora_entrada: datetime, tarifa: float) -> tuple[float, float]:
+    """Minutos estacionados y total a pagar."""
+    minutos = (datetime.now() - hora_entrada).total_seconds() / 60
+    return minutos, round(minutos * tarifa, 0)
+
+# ──────────────────────
+# Rutas
+# ──────────────────────
+@app.route("/")
+def home():
+    return "MiEstaciona API corriendo"
+
+# Alta con plaza automática
+@app.route("/registrar_vehiculo", methods=["POST"])
 def registrar_vehiculo():
-    data = request.get_json()
+    data      = request.get_json()
+    posicion  = asignar_posicion_disponible()
+    if not posicion:
+        return jsonify({"error": "Estacionamiento lleno"}), 400
+
     try:
-        posicion = asignar_posicion_disponible()
-        if not posicion:
-            return jsonify({'error': 'Estacionamiento lleno'}), 400
-
-        nuevo_vehiculo = Vehiculo(
-            patente=data['patente'],
-            conductor=data['conductor'],
-            correo=data.get('correo'),
-            hora_entrada=datetime.fromisoformat(data['hora_entrada']),
-            posicion=posicion,
-            activo=True
+        nuevo = Vehiculo(
+            patente      = data["patente"],
+            conductor    = data["conductor"],
+            correo       = data.get("correo"),
+            hora_entrada = datetime.fromisoformat(data["hora_entrada"]),
+            posicion     = posicion
         )
-        db.session.add(nuevo_vehiculo)
+        db.session.add(nuevo)
         db.session.commit()
-        return jsonify({'mensaje': 'Vehículo registrado con éxito'}), 201
-
+        return jsonify({"mensaje": "Vehículo registrado con éxito",
+                        "posicion": posicion}), 201
     except Exception as e:
         print("Error:", e)
-        return jsonify({'error': 'Error al registrar vehículo'}), 500
+        return jsonify({"error": "Error al registrar vehículo"}), 500
 
-# Endpoint: Registrar ingreso de vehículo (manual, sin posición automática)
-@app.route('/ingreso', methods=['POST'])
-def registrar_ingreso():
-    data = request.json
+# Alta manual (posición no automática)
+@app.route("/vehiculo/manual", methods=["POST"])
+def registrar_ingreso_manual():
+    data  = request.json
     nuevo = Vehiculo(
-        patente=data['patente'],
-        conductor=data['conductor'],
-        hora_entrada=datetime.now(),
-        posicion="MANUAL",  # Por compatibilidad
-        activo=True
+        patente      = data["patente"],
+        conductor    = data["conductor"],
+        hora_entrada = datetime.now(),
+        posicion     = "MANUAL"
     )
     db.session.add(nuevo)
     db.session.commit()
-    return jsonify({'mensaje': 'Ingreso registrado correctamente'}), 201
+    return jsonify({"mensaje": "Ingreso manual registrado"}), 201
 
-# Endpoint: Registrar salida y calcular tarifa
-@app.route('/salida/<patente>', methods=['PUT'])
-def registrar_salida(patente):
-    vehiculo = Vehiculo.query.filter_by(patente=patente, activo=True).first()
+# Cobrar y eliminar (botón “Eliminar” en frontend)
+@app.route("/vehiculo/<patente>", methods=["DELETE"])
+def cobrar_y_eliminar(patente):
+    vehiculo = Vehiculo.query.filter_by(patente=patente).first()
     if not vehiculo:
-        return jsonify({'error': 'Vehículo no encontrado'}), 404
+        return jsonify({"error": "Vehículo no encontrado"}), 404
 
-    vehiculo.hora_salida = datetime.now()
-    duracion = (vehiculo.hora_salida - vehiculo.hora_entrada).total_seconds() / 60
-    vehiculo.total_pagar = round(duracion * 50, 0)  # Tarifa por minuto
-    vehiculo.activo = False  # Marca que ya salió
+    minutos, total = calcular_total(
+        vehiculo.hora_entrada,
+        app.config["TARIFA_POR_MINUTO"]
+    )
+
+    db.session.delete(vehiculo)
     db.session.commit()
+
     return jsonify({
-        'mensaje': 'Salida registrada',
-        'total_pagar': vehiculo.total_pagar
+        "mensaje": "Cobro realizado y vehículo eliminado",
+        "total_pagar": total,
+        "minutos": round(minutos, 2)
     })
 
-# Endpoint: Historial completo
-@app.route('/historial', methods=['GET'])
+# Vehículos actualmente estacionados
+@app.route("/historial", methods=["GET"])
 def historial():
     vehiculos = Vehiculo.query.all()
-    resultado = [{
-        'patente': v.patente,
-        'conductor': v.conductor,
-        'entrada': v.hora_entrada,
-        'salida': v.hora_salida,
-        'total_pagar': v.total_pagar,
-        'posicion': v.posicion,
-        'activo': v.activo
-    } for v in vehiculos]
-    return jsonify(resultado)
+    return jsonify([
+        {
+            "patente":   v.patente,
+            "conductor": v.conductor,
+            "entrada":   v.hora_entrada,
+            "posicion":  v.posicion
+        } for v in vehiculos
+    ])
 
-# Endpoint: Registro de usuario
-@app.route('/registro', methods=['POST'])
+# ───────────
+# Usuarios
+# ───────────
+@app.route("/registro", methods=["POST"])
 def registro_usuario():
     data = request.json
-    if Usuario.query.filter_by(correo=data['correo']).first():
-        return jsonify({'error': 'Correo ya registrado'}), 400
+    if Usuario.query.filter_by(correo=data["correo"]).first():
+        return jsonify({"error": "Correo ya registrado"}), 400
+    if data["tipo_usuario"] not in ["usuario", "trabajador", "admin"]:
+        return jsonify({"error": "Tipo de usuario inválido"}), 400
 
-    if data['tipo_usuario'] not in ['usuario', 'trabajador', 'admin']:
-        return jsonify({'error': 'Tipo de usuario inválido'}), 400
-
-    nuevo_usuario = Usuario(
-        nombre=data['nombre'],
-        correo=data['correo'],
-        tipo_usuario=data['tipo_usuario']
+    user = Usuario(
+        nombre       = data["nombre"],
+        correo       = data["correo"],
+        tipo_usuario = data["tipo_usuario"]
     )
-    nuevo_usuario.set_password(data['contraseña'])
-    db.session.add(nuevo_usuario)
+    user.set_password(data["contraseña"])
+    db.session.add(user)
     db.session.commit()
-    return jsonify({'mensaje': 'Usuario registrado correctamente'}), 201
+    return jsonify({"mensaje": "Usuario registrado correctamente"}), 201
 
-# Endpoint: Login de usuario
-@app.route('/login', methods=['POST'])
+@app.route("/login", methods=["POST"])
 def login():
     data = request.json
-    usuario = Usuario.query.filter_by(correo=data['correo']).first()
-
-    if usuario and usuario.check_password(data['contraseña']):
+    user = Usuario.query.filter_by(correo=data["correo"]).first()
+    if user and user.check_password(data["contraseña"]):
         return jsonify({
-            'mensaje': 'Inicio de sesión exitoso',
-            'id': usuario.id,
-            'nombre': usuario.nombre,
-            'tipo_usuario': usuario.tipo_usuario
+            "mensaje": "Inicio de sesión exitoso",
+            "id":           user.id,
+            "nombre":       user.nombre,
+            "tipo_usuario": user.tipo_usuario
         })
-    return jsonify({'error': 'Correo o contraseña incorrectos'}), 401
+    return jsonify({"error": "Correo o contraseña incorrectos"}), 401
 
-if __name__ == '__main__':
+# 1) Listar todos
+@app.route("/usuarios", methods=["GET"])
+def listar_usuarios():
+    usuarios = Usuario.query.all()
+    return jsonify([
+        {
+            "id":           u.id,
+            "nombre":       u.nombre,
+            "correo":       u.correo,
+            "tipo_usuario": u.tipo_usuario
+        } for u in usuarios
+    ])
+
+# 2) Actualizar
+@app.route("/usuario/<int:uid>", methods=["PUT"])
+def actualizar_usuario(uid):
+    data     = request.json
+    usuario  = Usuario.query.get(uid)
+    if not usuario:
+        return jsonify({"error": "Usuario no encontrado"}), 404
+
+    # Validar correo único (si lo cambian)
+    if data.get("correo") and data["correo"] != usuario.correo:
+        if Usuario.query.filter_by(correo=data["correo"]).first():
+            return jsonify({"error": "Ese correo ya está en uso"}), 400
+        usuario.correo = data["correo"]
+
+    # Campos opcionales
+    usuario.nombre       = data.get("nombre", usuario.nombre)
+    usuario.tipo_usuario = data.get("tipo_usuario", usuario.tipo_usuario)
+
+    # Si llega una nueva contraseña no vacía, la actualizamos
+    nueva_pass = data.get("contraseña")
+    if nueva_pass:
+        usuario.set_password(nueva_pass)
+
+    db.session.commit()
+    return jsonify({"mensaje": "Usuario actualizado correctamente"})
+
+# 3) Eliminar
+@app.route("/usuario/<int:uid>", methods=["DELETE"])
+def eliminar_usuario(uid):
+    usuario = Usuario.query.get(uid)
+    if not usuario:
+        return jsonify({"error": "Usuario no encontrado"}), 404
+
+    db.session.delete(usuario)
+    db.session.commit()
+    return jsonify({"mensaje": "Usuario eliminado"})
+
+# ───────────
+# Bootstrap
+# ───────────
+if __name__ == "__main__":
     with app.app_context():
         db.create_all()
-        print("✔️ Base de datos y tablas creadas.")
-    print("Rutas registradas:")
-    for rule in app.url_map.iter_rules():
-        print(f"{rule.endpoint}: {rule.methods} -> {rule}")
+        print("✔️ Base de datos y tablas listas")
     app.run(debug=True)
