@@ -140,6 +140,7 @@ def historial():
             {
                 "patente": v.patente,
                 "conductor": v.conductor,
+                "correo": v.correo,
                 "entrada": v.hora_entrada.isoformat(timespec="seconds"),
                 "posicion": v.posicion,
             }
