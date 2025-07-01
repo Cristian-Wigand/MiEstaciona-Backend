@@ -4,10 +4,12 @@ from flask_cors import CORS
 from datetime import datetime
 import os
 
-from models import db, Plaza, Vehiculo, Usuario
+from models import db, Plaza, Vehiculo, Usuario, Configuracion
+
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*"}}) #poner asi para vercel; CORS(app, resources={r"/*": {"origins": "https://mi-estacionav1.vercel.app"}})
+
 
 # ─────────────────────────────
 # Configuración de la base
@@ -290,6 +292,43 @@ def estadisticas():
         "usuarios": tipos,
     })
 
+@app.route("/configuracion", methods=["GET"])
+def obtener_config():
+    config = Configuracion.query.first()
+    if config:
+        return jsonify({
+            "nombre": config.nombre,
+            "apertura": config.apertura,
+            "cierre": config.cierre,
+            "tarifa": config.tarifa
+        })
+    return jsonify({"error": "Configuración no encontrada"}), 404
+
+@app.route("/configuracion", methods=["PUT"])
+def actualizar_config():
+    datos = request.get_json()
+    print("✅ Datos recibidos:", datos)
+
+    # Elimina claves que no pertenecen al modelo
+    datos_filtrados = {
+        "nombre": datos.get("nombre"),
+        "apertura": datos.get("apertura"),
+        "cierre": datos.get("cierre"),
+        "tarifa": datos.get("tarifa")
+    }
+
+    config = Configuracion.query.first()
+    if not config:
+        config = Configuracion(**datos_filtrados)
+        db.session.add(config)
+    else:
+        config.nombre = datos_filtrados["nombre"]
+        config.apertura = datos_filtrados["apertura"]
+        config.cierre = datos_filtrados["cierre"]
+        config.tarifa = datos_filtrados["tarifa"]
+
+    db.session.commit()
+    return jsonify({"mensaje": "Configuración actualizada correctamente"})
 
 # ─────────────────────────────
 # Bootstrap

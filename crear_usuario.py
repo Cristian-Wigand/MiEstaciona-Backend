@@ -12,6 +12,7 @@ usuarios_a_crear = [
     {"nombre": "Juan", "correo": "juan2@example.com", "contraseña": "1234", "tipo_usuario": "usuario"},
     {"nombre": "Ana", "correo": "ana2@example.com", "contraseña": "abcd", "tipo_usuario": "trabajador"},
     {"nombre": "Luis", "correo": "luisadmin@example.com", "contraseña": "5678", "tipo_usuario": "admin"},
+    {"nombre": "admin", "correo": "admin@gmail.com", "contraseña": "123", "tipo_usuario": "admin"}
 ]
 
 with app.app_context():

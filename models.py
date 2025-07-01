@@ -84,3 +84,10 @@ class Usuario(db.Model):
 
     def __repr__(self):
         return f"<Usuario {self.nombre} ({self.tipo_usuario})>"
+
+class Configuracion(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    nombre = db.Column(db.String(100))
+    apertura = db.Column(db.String(5))  # Ej: "08:00"
+    cierre = db.Column(db.String(5))    # Ej: "20:00"
+    tarifa = db.Column(db.Float)
