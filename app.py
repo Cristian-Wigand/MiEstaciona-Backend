@@ -8,7 +8,7 @@ from models import db, Plaza, Vehiculo, Usuario, Configuracion
 
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}}) #poner asi para vercel; CORS(app, resources={r"/*": {"origins": "https://mi-estacionav1.vercel.app"}})
+CORS(app, resources={r"/*": {"origins": "https://mi-estacionav1.vercel.app"}}) #poner asi para vercel; CORS(app, resources={r"/*": {"origins": "https://mi-estacionav1.vercel.app"}})
 
 
 # ─────────────────────────────
