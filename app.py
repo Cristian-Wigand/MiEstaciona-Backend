@@ -4,11 +4,13 @@ from flask_cors import CORS
 from datetime import datetime
 import os
 
-from models import db, Plaza, Vehiculo, Usuario, Configuracion
-
+from models import db, Plaza, Vehiculo, Usuario, Configuracion, HistorialSalida
+from sqlalchemy import func
+from datetime import timedelta
+from calendar import monthrange
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "https://mi-estacionav1.vercel.app"}}) #poner asi para vercel; CORS(app, resources={r"/*": {"origins": "https://mi-estacionav1.vercel.app"}})
+CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}}) #poner asi para vercel; CORS(app, resources={r"/*": {"origins": "https://mi-estacionav1.vercel.app"}})
 
 
 # ─────────────────────────────
@@ -115,7 +117,18 @@ def cobrar_y_eliminar(patente):
         vehiculo.hora_entrada, app.config["TARIFA_POR_MINUTO"]
     )
 
-    # liberar plaza
+    historial = HistorialSalida(
+        patente=vehiculo.patente,
+        conductor=vehiculo.conductor,
+        correo=vehiculo.correo,
+        hora_entrada=vehiculo.hora_entrada,
+        hora_salida=datetime.now(),
+        duracion_minutos=round(minutos, 2),
+        total_pagado=total,
+        posicion=vehiculo.posicion
+    )
+    db.session.add(historial)
+
     if vehiculo.plaza:
         vehiculo.plaza.ocupado = False
 
@@ -124,7 +137,7 @@ def cobrar_y_eliminar(patente):
 
     return jsonify(
         {
-            "mensaje": "Cobro realizado",
+            "mensaje": "Cobro realizado y registrado",
             "total_pagar": total,
             "minutos": round(minutos, 2),
         }
@@ -149,6 +162,82 @@ def historial():
             for v in vehiculos
         ]
     )
+
+@app.route("/salidas", methods=["GET"])
+def ver_salidas():
+    salidas = HistorialSalida.query.order_by(HistorialSalida.hora_salida.desc()).all()
+    return jsonify([
+        {
+            "patente": s.patente,
+            "conductor": s.conductor,
+            "correo": s.correo,
+            "entrada": s.hora_entrada.isoformat(timespec="seconds"),
+            "salida": s.hora_salida.isoformat(timespec="seconds"),
+            "duracion": round(s.duracion_minutos, 2),
+            "total": s.total_pagado,
+            "posicion": s.posicion,
+        }
+        for s in salidas
+    ])
+
+@app.route("/estadisticas/salidas", methods=["GET"])
+def estadisticas_salidas():
+    modo = request.args.get("modo", "semana")
+    inicio_str = request.args.get("inicio")
+
+    hoy = datetime.now()
+
+    if modo == "semana":
+        if inicio_str:
+            try:
+                inicio = datetime.fromisoformat(inicio_str)
+                inicio = datetime(inicio.year, inicio.month, inicio.day, 0, 0, 0)  # fuerza hora exacta
+            except Exception:
+                return jsonify({"error": "Fecha de inicio inválida"}), 400
+        else:
+            inicio = hoy - timedelta(days=6)
+        fin = (inicio + timedelta(days=6)).replace(hour=23, minute=59, second=59, microsecond=999999)
+        agrupamiento = func.date(HistorialSalida.hora_salida)
+
+    elif modo == "mes":
+        if inicio_str:
+            try:
+                inicio = datetime.fromisoformat(inicio_str)
+                inicio = datetime(inicio.year, inicio.month, inicio.day, 0, 0, 0)  # fuerza hora exacta
+            except Exception:
+                return jsonify({"error": "Fecha de inicio inválida"}), 400
+        else:
+            inicio = hoy - timedelta(weeks=4)
+        ultimo_dia = monthrange(inicio.year, inicio.month)[1]
+        fin = datetime(inicio.year, inicio.month, ultimo_dia, 23, 59, 59)
+        agrupamiento = func.date(HistorialSalida.hora_salida)
+
+    elif modo == "anio":
+        if inicio_str:
+            try:
+                inicio = datetime.fromisoformat(inicio_str)
+                inicio = datetime(inicio.year, inicio.month, inicio.day, 0, 0, 0)  # fuerza hora exacta
+            except Exception:
+                return jsonify({"error": "Fecha de inicio inválida"}), 400
+        else:
+            inicio = datetime(hoy.year, 1, 1)
+        fin = datetime(inicio.year, 12, 31)
+        agrupamiento = func.strftime("%Y-%m", HistorialSalida.hora_salida)
+
+    else:
+        return jsonify({"error": "Modo inválido"}), 400
+
+    resultados = (
+        db.session.query(agrupamiento.label("periodo"), func.count().label("cantidad"))
+        .filter(HistorialSalida.hora_salida >= inicio, HistorialSalida.hora_salida <= fin)
+        .group_by("periodo")
+        .order_by("periodo")
+        .all()
+    )
+
+    return jsonify([
+        {"periodo": r.periodo, "cantidad": r.cantidad} for r in resultados
+    ])
 
 # ---------- Usuarios ----------
 @app.route("/registro", methods=["POST"])

@@ -2,6 +2,7 @@
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
+from sqlalchemy.orm import relationship
 
 db = SQLAlchemy()
 
@@ -91,3 +92,15 @@ class Configuracion(db.Model):
     apertura = db.Column(db.String(5))  # Ej: "08:00"
     cierre = db.Column(db.String(5))    # Ej: "20:00"
     tarifa = db.Column(db.Float)
+
+class HistorialSalida(db.Model):
+    __tablename__ = "historial_salida"
+    id = db.Column(db.Integer, primary_key=True)
+    patente = db.Column(db.String(20), nullable=False)
+    conductor = db.Column(db.String(100), nullable=False)
+    correo = db.Column(db.String(120))
+    hora_entrada = db.Column(db.DateTime, nullable=False)
+    hora_salida = db.Column(db.DateTime, nullable=False, default=datetime.now)
+    duracion_minutos = db.Column(db.Float, nullable=False)
+    total_pagado = db.Column(db.Float, nullable=False)
+    posicion = db.Column(db.String(10), nullable=False)
