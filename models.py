@@ -2,7 +2,9 @@
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Date, Text, ForeignKey
 from sqlalchemy.orm import relationship
+
 
 db = SQLAlchemy()
 
@@ -104,3 +106,16 @@ class HistorialSalida(db.Model):
     duracion_minutos = db.Column(db.Float, nullable=False)
     total_pagado = db.Column(db.Float, nullable=False)
     posicion = db.Column(db.String(10), nullable=False)
+
+
+class Cuadratura(db.Model):
+    __tablename__ = "cuadraturasv1"
+
+    id = Column(Integer, primary_key=True)
+    trabajador_id = Column(Integer, ForeignKey("usuarios.id"))
+    fecha = Column(Date)
+    jornada = Column(String)  # ← NUEVO CAMPO
+    desglose = Column(Text)
+    total = Column(Integer)
+
+    trabajador = relationship("Usuario")
