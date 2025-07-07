@@ -1,14 +1,18 @@
 # app.py
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from datetime import datetime
+from datetime import datetime, date  # ✅ importante: añadimos 'date'
+import json  # ✅ necesario para json.dumps(...)
 import os
 
-from models import db, Plaza, Vehiculo, Usuario, Configuracion
+from models import db, Plaza, Vehiculo, Usuario, Configuracion, Cuadratura
 
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "https://mi-estacionav1.vercel.app"}}) #poner asi para vercel; CORS(app, resources={r"/*": {"origins": "https://mi-estacionav1.vercel.app"}})
+#CORS(app, resources={r"/*": {"origins": "https://mi-estacionav1.vercel.app"}}) #poner asi para vercel; CORS(app, resources={r"/*": {"origins": "https://mi-estacionav1.vercel.app"}})
+#CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}})
+CORS(app, resources={r"/*": {"origins": ["http://localhost:5173", "http://127.0.0.1:5173"]}})
+
 
 
 # ─────────────────────────────
@@ -331,6 +335,38 @@ def actualizar_config():
     return jsonify({"mensaje": "Configuración actualizada correctamente"})
 
 # ─────────────────────────────
+
+
+
+@app.route("/cuadratura", methods=["POST"])
+def registrar_cuadratura():
+    data = request.json
+    trabajador_id = data["trabajador_id"]
+    jornada_str = data["jornada"]          # viene como string "YYYY-MM-DD"
+    desglose = data["desglose"]
+    total = data["total"]
+    contraseña = data["password"]
+
+    trabajador = Usuario.query.get(trabajador_id)
+    if not trabajador or not trabajador.check_password(contraseña):
+        return jsonify({"error": "Contraseña incorrecta"}), 401
+
+    try:
+        jornada_fecha = datetime.strptime(jornada_str, "%Y-%m-%d").date()
+    except ValueError:
+        return jsonify({"error": "Formato de fecha inválido"}), 400
+
+    nueva_cuadratura = Cuadratura(
+        trabajador_id=trabajador_id,
+        fecha=date.today(),             # fecha del registro
+        jornada=jornada_fecha,          # fecha seleccionada como jornada
+        desglose=json.dumps(desglose),
+        total=total
+    )
+    db.session.add(nueva_cuadratura)
+    db.session.commit()
+    return jsonify({"mensaje": "Caja base registrada con éxito"})
+
 # Bootstrap
 # ─────────────────────────────
 if __name__ == "__main__":
